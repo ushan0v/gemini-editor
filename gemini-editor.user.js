@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         Gemini Editor
 // @namespace    https://github.com/ushan0v/gemini-editor
-// @version      1.0.0
+// @version      1.0.1
 // @description  Unlocks editing for previous user messages in Gemini chats.
 // @author       ushan0v
 // @license      MIT
