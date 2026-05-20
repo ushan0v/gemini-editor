@@ -1,4 +1,3 @@
-# Publish only the bundled userscript and repository docs/config.
 *
 !.gitignore
 !README.md

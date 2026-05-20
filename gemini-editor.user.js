@@ -53,9 +53,11 @@
         userQueryImagePreview: 'img[data-test-id="uploaded-img"]',
         userQueryVideoPreview: 'img[data-test-id="video-thumbnail"]',
         editModeBar: '.gemini-edit-mode-bar',
-        copyIcon: 'mat-icon[fonticon="content_copy"]',
-        nativeEditIcon: 'mat-icon[fonticon="edit"]',
-        nativeEditButton: 'button[data-test-id="prompt-edit-button"]',
+        copyIcon: 'mat-icon[fonticon="content_copy"], mat-icon[fonticon="copy"], mat-icon[data-mat-icon-name="content_copy"], mat-icon[data-mat-icon-name="copy"]',
+        nativeEditIcon: 'mat-icon[fonticon="edit"], mat-icon[data-mat-icon-name="edit"]',
+        nativeEditButton: '[data-test-id="prompt-edit-button"], button[data-test-id="prompt-edit-button"]',
+        nativePromptActionHost: '[data-test-id="prompt-edit-button"]:not([data-gemini-editor-wrapper="true"]):not([data-gemini-editor-button="true"])',
+        sendButton: 'button.send-button.submit, gem-icon-button.send-button.submit',
         jslog: '[jslog]',
         draftNode: '[data-test-draft-id]',
     };
@@ -114,6 +116,8 @@
 
     function getNativeIconTemplate(fonticon) {
         return document.querySelector(`mat-icon[fonticon="${fonticon}"]`)
+            || document.querySelector(`mat-icon[data-mat-icon-name="${fonticon}"]`)
+            || document.querySelector('mat-icon.lumi-symbols')
             || document.querySelector('mat-icon.google-symbols');
     }
 
@@ -148,6 +152,11 @@
                 previewChipContentAttr: null,
                 previewChipHostAttr: null,
                 previewInnerContentAttr: null,
+                fileAttachmentContentAttr: null,
+                fileAttachmentHostAttr: null,
+                mediaAttachmentContentAttr: null,
+                mediaAttachmentHostAttr: null,
+                iconButtonHostAttr: null,
             };
         }
 
@@ -159,6 +168,9 @@
         const nativeContainer = field.querySelector(`${SELECTORS.nativeAttachmentPreviewWrapper} ${SELECTORS.attachmentPreviewContainer}`);
         const nativeChip = nativeContainer?.querySelector('uploader-file-preview') || null;
         const nativeInner = nativeChip?.querySelector('.file-preview-container, .file-preview, .image-preview') || null;
+        const nativeFileAttachment = nativeChip?.querySelector('gem-attachment') || field.querySelector('gem-attachment') || null;
+        const nativeMediaAttachment = nativeChip?.querySelector('gem-media-attachment') || field.querySelector('gem-media-attachment') || null;
+        const nativeCloseButtonHost = nativeChip?.querySelector('.gem-attachment-close-button') || field.querySelector('.gem-attachment-close-button') || null;
 
         return {
             inputContentAttr,
@@ -166,6 +178,11 @@
             previewChipContentAttr: getScopeAttributeName(nativeChip, '_ngcontent-'),
             previewChipHostAttr: getScopeAttributeName(nativeChip, '_nghost-'),
             previewInnerContentAttr: getScopeAttributeName(nativeInner, '_ngcontent-'),
+            fileAttachmentContentAttr: getScopeAttributeName(nativeFileAttachment, '_ngcontent-'),
+            fileAttachmentHostAttr: getScopeAttributeName(nativeFileAttachment, '_nghost-'),
+            mediaAttachmentContentAttr: getScopeAttributeName(nativeMediaAttachment, '_ngcontent-'),
+            mediaAttachmentHostAttr: getScopeAttributeName(nativeMediaAttachment, '_nghost-'),
+            iconButtonHostAttr: getScopeAttributeName(nativeCloseButtonHost, '_nghost-'),
         };
     }
 
@@ -318,6 +335,8 @@
             'button[data-test-id="bard-mode-menu-button"]',
             'button.speech_dictation_mic_button',
             'button.send-button.submit',
+            'gem-icon-button.speech_dictation_mic_button button',
+            'gem-icon-button.send-button.submit button',
             `button[${ATTRS.customButton}="true"]`,
         ].join(', ')).forEach(ensureButtonRippleSpan);
     }
@@ -1539,7 +1558,10 @@
             return [];
         }
 
-        return Array.from(field.querySelectorAll(`uploader-file-preview:not([${ATTRS.attachmentOwned}="true"]) button[data-test-id="cancel-button"]`));
+        return Array.from(field.querySelectorAll([
+            `uploader-file-preview:not([${ATTRS.attachmentOwned}="true"]) button[data-test-id="cancel-button"]`,
+            `uploader-file-preview:not([${ATTRS.attachmentOwned}="true"]) .gem-attachment-close-button button`,
+        ].join(', ')));
     }
 
     function clearNativeComposerAttachments(textInputField) {
@@ -1557,6 +1579,10 @@
         const strings = getUiStrings();
         const prefixes = [
             strings.removeFile,
+            'close',
+            'Close',
+            'Remove',
+            'remove',
         ].filter(Boolean);
 
         for (const prefix of prefixes) {
@@ -1568,6 +1594,54 @@
         return '';
     }
 
+    function getVisibleNativeComposerAttachmentNameCandidatesFromChip(chip) {
+        if (!chip) {
+            return [];
+        }
+
+        const candidates = [];
+        const addCandidate = (value) => {
+            const candidate = typeof value === 'string' ? value.trim() : '';
+            if (candidate && !candidates.includes(candidate)) {
+                candidates.push(candidate);
+            }
+        };
+
+        const cancelLabel = chip.querySelector('button[data-test-id="cancel-button"], .gem-attachment-close-button button')?.getAttribute('aria-label');
+        addCandidate(extractFilenameFromRemoveAriaLabel(cancelLabel));
+        addCandidate(chip.querySelector('[title]')?.getAttribute('title'));
+        addCandidate(chip.querySelector('.gem-attachment-text')?.textContent);
+        addCandidate(chip.querySelector('[data-test-id="filename-label"]')?.textContent);
+        addCandidate(chip.querySelector('[data-test-id="file-name"], .file-name')?.textContent);
+
+        return candidates;
+    }
+
+    function getAttachmentNameMatchKeys(filename) {
+        const normalized = typeof filename === 'string' ? filename.trim() : '';
+        if (!normalized) {
+            return [];
+        }
+
+        const displayName = formatAttachmentDisplayName({ filename: normalized });
+        return [normalized, stripAttachmentExtension(normalized), displayName]
+            .map((value) => (typeof value === 'string' ? value.trim().toLowerCase() : ''))
+            .filter((value, index, values) => value && values.indexOf(value) === index);
+    }
+
+    function getVisibleAttachmentNameMatchKeys(filename) {
+        const normalized = typeof filename === 'string' ? filename.trim() : '';
+        if (!normalized) {
+            return [];
+        }
+
+        if (getAttachmentFileExtension(normalized)) {
+            return [normalized.toLowerCase()];
+        }
+
+        return getAttachmentNameMatchKeys(normalized);
+    }
+
     function getVisibleNativeComposerAttachmentFilenames(textInputField) {
         const field = textInputField || getTextInputField();
         if (!field) {
@@ -1577,18 +1651,7 @@
         const filenames = [];
         const nativeChips = Array.from(field.querySelectorAll(`uploader-file-preview:not([${ATTRS.attachmentOwned}="true"])`));
         nativeChips.forEach((chip) => {
-            const cancelLabel = chip.querySelector('button[data-test-id="cancel-button"]')?.getAttribute('aria-label');
-            const fileNameFromLabel = extractFilenameFromRemoveAriaLabel(cancelLabel);
-            if (fileNameFromLabel) {
-                filenames.push(fileNameFromLabel);
-                return;
-            }
-
-            const titledNode = chip.querySelector('[title]');
-            const titledValue = titledNode?.getAttribute('title');
-            if (titledValue) {
-                filenames.push(titledValue);
-            }
+            filenames.push(...getVisibleNativeComposerAttachmentNameCandidatesFromChip(chip));
         });
 
         return filenames;
@@ -1615,11 +1678,9 @@
 
         return Array.from(field.querySelectorAll(`uploader-file-preview:not([${ATTRS.attachmentOwned}="true"])`))
             .map((chip) => {
-                const cancelLabel = chip.querySelector('button[data-test-id="cancel-button"]')?.getAttribute('aria-label');
-                const filename = extractFilenameFromRemoveAriaLabel(cancelLabel)
-                    || chip.querySelector('[title]')?.getAttribute('title')
-                    || '';
-                const imagePreview = chip.querySelector('img[data-test-id="image-preview"]');
+                const nameCandidates = getVisibleNativeComposerAttachmentNameCandidatesFromChip(chip);
+                const filename = nameCandidates[0] || '';
+                const imagePreview = chip.querySelector('img[data-test-id="image-preview"], .gem-attachment-style-img');
                 const videoPreview = chip.querySelector('img[data-test-id="video-preview"]');
                 const previewUrl = normalizeAttachmentMatchUrl(
                     imagePreview?.getAttribute('src')
@@ -1627,11 +1688,12 @@
                     || '',
                 );
                 const durationSeconds = parseAttachmentDurationLabel(
-                    chip.querySelector('[data-test-id="video-timecode"]')?.textContent || '',
+                    chip.querySelector('[data-test-id="video-timecode"], .time-overlay span')?.textContent || '',
                 );
 
                 return {
                     filename,
+                    nameCandidates,
                     previewUrl,
                     viewUrl: previewUrl,
                     durationSeconds,
@@ -1645,26 +1707,37 @@
             return [];
         }
 
-        const visibleFilenames = getVisibleNativeComposerAttachmentFilenames(textInputField);
+        const visibleDetails = getVisibleNativeComposerAttachmentDetails(textInputField);
+        const visibleFilenames = visibleDetails.flatMap((attachment) => {
+            return Array.isArray(attachment.nameCandidates)
+                ? attachment.nameCandidates
+                : [attachment.filename].filter(Boolean);
+        });
         if (!visibleFilenames.length) {
-            return [];
+            return visibleDetails.length
+                ? nativeAttachments.slice(0, visibleDetails.length)
+                : [];
         }
 
         const counts = new Map();
         visibleFilenames.forEach((filename) => {
-            counts.set(filename, (counts.get(filename) || 0) + 1);
+            getVisibleAttachmentNameMatchKeys(filename).forEach((key) => {
+                counts.set(key, (counts.get(key) || 0) + 1);
+            });
         });
 
         return nativeAttachments.filter((attachmentRecord) => {
             const filename = typeof attachmentRecord?.[1] === 'string'
                 ? attachmentRecord[1]
                 : '';
-            const remaining = counts.get(filename) || 0;
-            if (!filename || remaining < 1) {
+            const matchKey = getAttachmentNameMatchKeys(filename).find((key) => {
+                return (counts.get(key) || 0) > 0;
+            });
+            if (!matchKey) {
                 return false;
             }
 
-            counts.set(filename, remaining - 1);
+            counts.set(matchKey, (counts.get(matchKey) || 0) - 1);
             return true;
         });
     }
@@ -1678,8 +1751,14 @@
         return nativeAttachments
             .map((payloadRecord, index) => {
                 const filename = typeof payloadRecord?.[1] === 'string' ? payloadRecord[1] : '';
+                const payloadNameKeys = getAttachmentNameMatchKeys(filename);
                 const matchingUiAttachment = uiAttachments.find((attachment) => {
-                    return attachment.filename && attachment.filename === filename;
+                    const uiNameCandidates = Array.isArray(attachment.nameCandidates)
+                        ? attachment.nameCandidates
+                        : [attachment.filename];
+                    return uiNameCandidates.some((candidate) => {
+                        return getVisibleAttachmentNameMatchKeys(candidate).some((key) => payloadNameKeys.includes(key));
+                    });
                 }) || uiAttachments[index] || {};
 
                 return normalizePayloadAttachmentRecord(payloadRecord, matchingUiAttachment);
@@ -1689,6 +1768,61 @@
 
     function normalizeAttachmentMatchUrl(url) {
         return typeof url === 'string' ? url.trim() : '';
+    }
+
+    function getFallbackAttachmentMime(descriptor) {
+        const extension = getAttachmentFileExtension(descriptor?.filename);
+        if (descriptor?.kind === 'image') {
+            return extension ? `image/${extension === 'jpg' ? 'jpeg' : extension}` : 'image/*';
+        }
+
+        if (descriptor?.kind === 'video') {
+            return extension ? `video/${extension}` : 'video/*';
+        }
+
+        if (extension === 'pdf') {
+            return 'application/pdf';
+        }
+
+        if (extension === 'zip') {
+            return 'application/zip';
+        }
+
+        if (PLAIN_TEXT_FILE_EXTENSIONS.has(extension) || CODE_FILE_EXTENSIONS.has(extension)) {
+            return 'text/plain';
+        }
+
+        return 'application/octet-stream';
+    }
+
+    function createFallbackAttachmentRecordsFromUserQueryUi(userQuery) {
+        return getVisibleUserQueryAttachmentDescriptors(userQuery)
+            .map((descriptor, index) => {
+                const filename = descriptor.filename || '';
+                const attachment = {
+                    key: `ui:${descriptor.kind || 'file'}:${filename}:${descriptor.previewUrl || ''}:${index}`,
+                    kind: descriptor.kind || 'file',
+                    typeCode: descriptor.kind === 'image' ? 1 : (descriptor.kind === 'video' ? 2 : 0),
+                    filename,
+                    mime: getFallbackAttachmentMime(descriptor),
+                    token: '',
+                    previewUrl: descriptor.previewUrl || null,
+                    downloadUrl: null,
+                    viewUrl: descriptor.previewUrl || null,
+                    width: null,
+                    height: null,
+                    durationSeconds: descriptor.durationSeconds ?? null,
+                    payloadRecord: null,
+                };
+
+                attachment.typeLabel = formatAttachmentTypeLabel(attachment);
+                attachment.displayName = formatAttachmentDisplayName(attachment)
+                    || descriptor.displayName
+                    || filename
+                    || attachment.typeLabel;
+                return attachment;
+            })
+            .filter((attachment) => attachment.filename || attachment.previewUrl);
     }
 
     function getVisibleUserQueryAttachmentDescriptors(userQuery) {
@@ -1705,7 +1839,9 @@
                 descriptors.push({
                     kind: 'file',
                     filename: fileButton.getAttribute('aria-label')?.trim() || '',
+                    displayName: node.querySelector('[data-test-id="filename-label"], .filename-label')?.textContent?.trim() || '',
                     previewUrl: '',
+                    durationSeconds: null,
                 });
                 return;
             }
@@ -1716,6 +1852,7 @@
                     kind: 'image',
                     filename: '',
                     previewUrl: normalizeAttachmentMatchUrl(imagePreview.getAttribute('src')),
+                    durationSeconds: null,
                 });
                 return;
             }
@@ -1726,6 +1863,9 @@
                     kind: 'video',
                     filename: '',
                     previewUrl: normalizeAttachmentMatchUrl(videoPreview.getAttribute('src')),
+                    durationSeconds: parseAttachmentDurationLabel(
+                        node.querySelector('.video-timecode')?.textContent || '',
+                    ),
                 });
             }
         });
@@ -1738,7 +1878,9 @@
             descriptors.push({
                 kind: 'file',
                 filename: button.getAttribute('aria-label')?.trim() || '',
+                displayName: button.querySelector('[data-test-id="filename-label"], .filename-label')?.textContent?.trim() || '',
                 previewUrl: '',
+                durationSeconds: null,
             });
         });
         userQuery.querySelectorAll(SELECTORS.userQueryImagePreview).forEach((image) => {
@@ -1746,6 +1888,7 @@
                 kind: 'image',
                 filename: '',
                 previewUrl: normalizeAttachmentMatchUrl(image.getAttribute('src')),
+                durationSeconds: null,
             });
         });
         userQuery.querySelectorAll(SELECTORS.userQueryVideoPreview).forEach((image) => {
@@ -1753,6 +1896,9 @@
                 kind: 'video',
                 filename: '',
                 previewUrl: normalizeAttachmentMatchUrl(image.getAttribute('src')),
+                durationSeconds: parseAttachmentDurationLabel(
+                    image.closest('user-query-file-preview')?.querySelector('.video-timecode')?.textContent || '',
+                ),
             });
         });
 
@@ -1809,9 +1955,49 @@
                 }
 
                 usedAttachmentIndexes.add(index);
-                return attachments[index];
+                const attachment = cloneAttachmentRecord(attachments[index]);
+                if (!attachment) {
+                    return null;
+                }
+
+                if ((descriptor.kind === 'image' || descriptor.kind === 'video') && descriptor.previewUrl) {
+                    attachment.kind = descriptor.kind;
+                    attachment.typeCode = descriptor.kind === 'image' ? 1 : 2;
+                    attachment.previewUrl = descriptor.previewUrl;
+                    attachment.viewUrl = attachment.viewUrl || descriptor.previewUrl;
+                    attachment.durationSeconds = attachment.durationSeconds ?? descriptor.durationSeconds ?? null;
+                    attachment.typeLabel = formatAttachmentTypeLabel(attachment);
+                    attachment.displayName = formatAttachmentDisplayName(attachment);
+                }
+
+                return attachment;
             })
             .filter(Boolean);
+    }
+
+    function findCachedAttachmentsByUserQueryUi(conversationId, userQuery) {
+        const descriptors = getVisibleUserQueryAttachmentDescriptors(userQuery);
+        if (!descriptors.length || !state.attachmentCache.size) {
+            return [];
+        }
+
+        let bestMatch = [];
+        state.attachmentCache.forEach((attachments, cacheKey) => {
+            if (
+                conversationId
+                && typeof cacheKey === 'string'
+                && !cacheKey.startsWith(`${conversationId}::`)
+            ) {
+                return;
+            }
+
+            const filtered = filterCachedAttachmentsByUserQueryUi(attachments, userQuery);
+            if (filtered.length > bestMatch.length) {
+                bestMatch = filtered.map(cloneAttachmentRecord).filter(Boolean);
+            }
+        });
+
+        return bestMatch.length === descriptors.length ? bestMatch : [];
     }
 
     function removePendingAttachment(attachmentKey) {
@@ -1832,23 +2018,81 @@
 
     function createAttachmentRemoveButton(attachment, contentScopeAttr) {
         const strings = getUiStrings();
+        const attachmentLabel = attachment.filename || attachment.displayName || attachment.typeLabel || strings.unknownType;
         const button = document.createElement('button');
         button.type = 'button';
-        button.className = 'cancel-button ng-star-inserted';
+        button.className = 'mdc-icon-button mat-mdc-icon-button mat-mdc-button-base mat-badge mat-unthemed mat-badge-overlap mat-badge-above mat-badge-after mat-badge-small mat-badge-hidden ng-star-inserted';
         button.setAttribute('data-test-id', 'cancel-button');
-        button.setAttribute('aria-label', `${strings.removeFile} ${attachment.filename}`);
+        button.setAttribute('aria-label', `${strings.removeFile} ${attachmentLabel}`);
         button.setAttribute(ATTRS.attachmentOwned, 'true');
 
         const icon = createMaterialIcon('close');
+        icon.classList.add('lm-icon-s');
         applyScopeAttribute(button, contentScopeAttr);
         applyScopeAttribute(icon, contentScopeAttr);
+        button.appendChild(createPersistentRippleSpan('mdc-icon-button__ripple'));
         button.appendChild(icon);
+        button.appendChild(createClassSpan('mat-focus-indicator'));
+        button.appendChild(createClassSpan('mat-mdc-button-touch-target'));
         button.addEventListener('click', (event) => {
             event.preventDefault();
             event.stopPropagation();
             removePendingAttachment(attachment.key);
         });
         return button;
+    }
+
+    function createClassSpan(className) {
+        const span = document.createElement('span');
+        span.className = className;
+        return span;
+    }
+
+    function createPersistentRippleSpan(className) {
+        return createClassSpan(`mat-mdc-button-persistent-ripple ${className}`);
+    }
+
+    function createOwnedAttachmentCloseControl(attachment, scope, attachmentContentAttr) {
+        const strings = getUiStrings();
+        const attachmentLabel = attachment.filename || attachment.displayName || attachment.typeLabel || strings.unknownType;
+        const host = document.createElement('gem-icon-button');
+        host.className = 'gem-attachment-close-button gem-button gem-button-badge-size-small gem-button-size-xsmall gem-button-type-tonal lm-enabled ng-star-inserted';
+        host.setAttribute('theme', 'lm');
+        host.setAttribute('type', 'tonal');
+        host.setAttribute('size', 'xsmall');
+        host.setAttribute('arialabel', `${strings.removeFile} ${attachmentLabel}`);
+        host.setAttribute(ATTRS.attachmentOwned, 'true');
+        applyScopeAttribute(host, attachmentContentAttr);
+        applyScopeAttribute(host, scope.iconButtonHostAttr);
+
+        host.appendChild(createAttachmentRemoveButton(attachment, attachmentContentAttr));
+        return host;
+    }
+
+    function createOwnedAttachmentMatChip(attachmentContentAttr) {
+        const chip = document.createElement('mat-basic-chip');
+        chip.className = 'mat-mdc-chip mat-ripple mat-primary mat-mdc-basic-chip ng-star-inserted';
+        chip.setAttribute('matripple', '');
+        chip.setAttribute(ATTRS.attachmentOwned, 'true');
+        applyScopeAttribute(chip, attachmentContentAttr);
+
+        const focusOverlay = createClassSpan('mat-mdc-chip-focus-overlay');
+        const cell = createClassSpan('mdc-evolution-chip__cell mdc-evolution-chip__cell--primary');
+        const action = createClassSpan('mat-mdc-chip-action mdc-evolution-chip__action mdc-evolution-chip__action--presentational mdc-evolution-chip__action--primary');
+        action.setAttribute('aria-disabled', 'false');
+        const label = createClassSpan('mdc-evolution-chip__text-label mat-mdc-chip-action-label');
+        const focusIndicator = createClassSpan('mat-mdc-chip-primary-focus-indicator mat-focus-indicator');
+
+        [focusOverlay, cell, action, label, focusIndicator].forEach((node) => {
+            applyScopeAttribute(node, attachmentContentAttr);
+        });
+
+        action.appendChild(label);
+        action.appendChild(focusIndicator);
+        cell.appendChild(action);
+        chip.appendChild(focusOverlay);
+        chip.appendChild(cell);
+        return { chip, label };
     }
 
     function createOwnedAttachmentShell(textInputField, attachment) {
@@ -1861,9 +2105,9 @@
         applyScopeAttribute(chip, scope.previewChipHostAttr);
 
         const container = document.createElement('div');
-        container.className = 'mat-mdc-tooltip-trigger file-preview-container';
+        container.className = 'mat-mdc-tooltip-trigger file-preview-container lm-enabled';
         container.setAttribute(ATTRS.attachmentOwned, 'true');
-        container.setAttribute(ATTRS.tooltip, attachment.filename);
+        container.setAttribute(ATTRS.tooltip, attachment.filename || attachment.displayName || attachment.typeLabel || '');
         applyScopeAttribute(container, scope.previewInnerContentAttr);
 
         chip.appendChild(container);
@@ -1872,100 +2116,136 @@
 
     function createOwnedFileAttachmentChip(textInputField, attachment) {
         const { chip, container, scope } = createOwnedAttachmentShell(textInputField, attachment);
-        const preview = document.createElement('div');
-        preview.className = 'file-preview discovery-feed-theme ng-star-inserted';
-        preview.setAttribute('data-test-id', 'file-preview');
-        preview.setAttribute(ATTRS.attachmentOwned, 'true');
-        applyScopeAttribute(preview, scope.previewInnerContentAttr);
+        const attachmentHost = document.createElement('gem-attachment');
+        attachmentHost.className = 'gem-attachment gds-label-l gem-attachment-tile lm-enabled ng-star-inserted';
+        attachmentHost.setAttribute('tabindex', '0');
+        attachmentHost.setAttribute(ATTRS.attachmentOwned, 'true');
+        applyScopeAttribute(attachmentHost, scope.previewInnerContentAttr);
+        applyScopeAttribute(attachmentHost, scope.fileAttachmentHostAttr);
+
+        const { chip: matChip, label } = createOwnedAttachmentMatChip(scope.fileAttachmentContentAttr);
+        const content = document.createElement('span');
+        content.className = 'gem-attachment-content ng-star-inserted';
+        content.setAttribute(ATTRS.attachmentOwned, 'true');
+        applyScopeAttribute(content, scope.fileAttachmentContentAttr);
+
+        const iconHost = document.createElement('gem-icon');
+        iconHost.className = 'gem-attachment-icon ng-star-inserted';
+        iconHost.setAttribute('size', 'large');
+        iconHost.setAttribute(ATTRS.attachmentOwned, 'true');
+        applyScopeAttribute(iconHost, scope.fileAttachmentContentAttr);
 
         const icon = document.createElement('img');
-        icon.className = 'file-icon';
+        icon.className = 'lm-icon-l ng-star-inserted';
         icon.setAttribute('data-test-id', 'file-icon-img');
         icon.src = getAttachmentIconUrl(attachment);
         icon.alt = getAttachmentIconAltText(attachment);
-        applyScopeAttribute(icon, scope.previewInnerContentAttr);
+        applyScopeAttribute(icon, scope.fileAttachmentContentAttr);
+        iconHost.appendChild(icon);
 
-        const name = document.createElement('div');
-        name.className = 'file-name';
+        const name = document.createElement('span');
+        name.className = 'gem-attachment-text gds-body-s ng-star-inserted';
         name.setAttribute('data-test-id', 'file-name');
         name.title = attachment.filename;
-        name.textContent = ` ${attachment.displayName} `;
-        applyScopeAttribute(name, scope.previewInnerContentAttr);
+        name.textContent = attachment.displayName || stripAttachmentExtension(attachment.filename) || attachment.filename;
+        applyScopeAttribute(name, scope.fileAttachmentContentAttr);
 
-        const type = document.createElement('div');
-        type.className = 'file-type';
-        type.textContent = attachment.typeLabel;
-        applyScopeAttribute(type, scope.previewInnerContentAttr);
-
-        preview.appendChild(icon);
-        preview.appendChild(name);
-        preview.appendChild(type);
-        preview.appendChild(createAttachmentRemoveButton(attachment, scope.previewInnerContentAttr));
-
-        container.appendChild(preview);
+        content.appendChild(iconHost);
+        content.appendChild(name);
+        content.appendChild(createOwnedAttachmentCloseControl(attachment, scope, scope.fileAttachmentContentAttr));
+        label.appendChild(content);
+        attachmentHost.appendChild(matChip);
+        container.appendChild(attachmentHost);
         return chip;
     }
 
     function createOwnedImageAttachmentChip(textInputField, attachment) {
         const { chip, container, scope } = createOwnedAttachmentShell(textInputField, attachment);
-        const previewButton = document.createElement('button');
-        previewButton.type = 'button';
-        previewButton.className = 'image-preview clickable ng-star-inserted';
-        previewButton.setAttribute(ATTRS.attachmentOwned, 'true');
-        applyScopeAttribute(previewButton, scope.previewInnerContentAttr);
-
-        const image = document.createElement('img');
-        image.setAttribute('data-test-id', 'image-preview');
-        image.setAttribute('aria-label', getUiStrings().imagePreview);
-        image.src = attachment.previewUrl || attachment.viewUrl || '';
-        applyScopeAttribute(image, scope.previewInnerContentAttr);
-
-        previewButton.appendChild(image);
+        const attachmentHost = document.createElement('gem-media-attachment');
+        attachmentHost.className = 'gem-attachment gds-label-l clickable gem-attachment-tile lm-enabled ng-star-inserted';
+        attachmentHost.setAttribute('tabindex', '0');
+        attachmentHost.setAttribute(ATTRS.attachmentOwned, 'true');
         if (attachment.viewUrl) {
-            previewButton.addEventListener('click', () => {
+            attachmentHost.addEventListener('click', () => {
                 window.open(attachment.viewUrl, '_blank', 'noopener,noreferrer');
             });
         }
+        applyScopeAttribute(attachmentHost, scope.previewInnerContentAttr);
+        applyScopeAttribute(attachmentHost, scope.mediaAttachmentHostAttr);
 
-        container.appendChild(previewButton);
-        container.appendChild(createAttachmentRemoveButton(attachment, scope.previewInnerContentAttr));
+        const { chip: matChip, label } = createOwnedAttachmentMatChip(scope.mediaAttachmentContentAttr);
+        const image = document.createElement('img');
+        image.className = 'gem-attachment-style-img ng-star-inserted';
+        image.setAttribute('data-test-id', 'image-preview');
+        image.setAttribute('aria-label', getUiStrings().imagePreview);
+        image.alt = 'attachment';
+        image.src = attachment.previewUrl || attachment.viewUrl || '';
+        applyScopeAttribute(image, scope.mediaAttachmentContentAttr);
+
+        const content = document.createElement('span');
+        content.className = 'gem-attachment-content ng-star-inserted';
+        content.setAttribute(ATTRS.attachmentOwned, 'true');
+        applyScopeAttribute(content, scope.mediaAttachmentContentAttr);
+
+        content.appendChild(createOwnedAttachmentCloseControl(attachment, scope, scope.mediaAttachmentContentAttr));
+        label.appendChild(image);
+        label.appendChild(content);
+        attachmentHost.appendChild(matChip);
+        container.appendChild(attachmentHost);
         return chip;
     }
 
     function createOwnedVideoAttachmentChip(textInputField, attachment) {
         const strings = getUiStrings();
         const { chip, container, scope } = createOwnedAttachmentShell(textInputField, attachment);
-        const preview = document.createElement('div');
-        preview.className = 'image-preview ng-star-inserted';
-        preview.setAttribute(ATTRS.attachmentOwned, 'true');
-        applyScopeAttribute(preview, scope.previewInnerContentAttr);
+        const attachmentHost = document.createElement('gem-media-attachment');
+        attachmentHost.className = 'gem-attachment gds-label-l clickable gem-attachment-tile lm-enabled ng-star-inserted';
+        attachmentHost.setAttribute('tabindex', '0');
+        attachmentHost.setAttribute(ATTRS.attachmentOwned, 'true');
+        applyScopeAttribute(attachmentHost, scope.previewInnerContentAttr);
+        applyScopeAttribute(attachmentHost, scope.mediaAttachmentHostAttr);
 
-        const imageContainer = document.createElement('div');
-        imageContainer.className = 'video-preview-img-container';
-        applyScopeAttribute(imageContainer, scope.previewInnerContentAttr);
-
+        const { chip: matChip, label } = createOwnedAttachmentMatChip(scope.mediaAttachmentContentAttr);
         const image = document.createElement('img');
+        image.className = 'gem-attachment-style-img ng-star-inserted';
         image.setAttribute('data-test-id', 'video-preview');
         image.setAttribute('aria-label', strings.videoPreview);
+        image.alt = 'attachment';
         image.src = attachment.previewUrl || attachment.viewUrl || '';
-        applyScopeAttribute(image, scope.previewInnerContentAttr);
-        imageContainer.appendChild(image);
+        applyScopeAttribute(image, scope.mediaAttachmentContentAttr);
 
-        const timecodeWrapper = document.createElement('div');
-        timecodeWrapper.className = 'timecode-wrapper ng-star-inserted';
-        applyScopeAttribute(timecodeWrapper, scope.previewInnerContentAttr);
-        const timecode = document.createElement('span');
-        timecode.setAttribute('data-test-id', 'video-timecode');
-        timecode.className = 'video-timecode gds-label-m';
-        timecode.textContent = ` ${formatAttachmentDuration(attachment.durationSeconds)} `;
-        applyScopeAttribute(timecode, scope.previewInnerContentAttr);
-        timecodeWrapper.appendChild(timecode);
+        const content = document.createElement('span');
+        content.className = 'gem-attachment-content ng-star-inserted';
+        content.setAttribute(ATTRS.attachmentOwned, 'true');
+        applyScopeAttribute(content, scope.mediaAttachmentContentAttr);
 
-        preview.appendChild(imageContainer);
-        preview.appendChild(timecodeWrapper);
-        preview.appendChild(createAttachmentRemoveButton(attachment, scope.previewInnerContentAttr));
+        const durationLabel = formatAttachmentDuration(attachment.durationSeconds);
+        if (durationLabel) {
+            const timecodeWrapper = document.createElement('div');
+            timecodeWrapper.className = 'time-overlay ng-star-inserted';
+            applyScopeAttribute(timecodeWrapper, scope.mediaAttachmentContentAttr);
+            const playIconHost = document.createElement('gem-icon');
+            playIconHost.setAttribute('size', 'small');
+            applyScopeAttribute(playIconHost, scope.mediaAttachmentContentAttr);
+            const playIcon = createMaterialIcon('play_arrow');
+            playIcon.classList.add('lm-icon-s');
+            applyScopeAttribute(playIcon, scope.mediaAttachmentContentAttr);
+            playIconHost.appendChild(playIcon);
+            const timecode = document.createElement('span');
+            timecode.setAttribute('data-test-id', 'video-timecode');
+            timecode.className = 'gds-emphasized-body-s video-timecode';
+            timecode.textContent = durationLabel;
+            applyScopeAttribute(timecode, scope.mediaAttachmentContentAttr);
+            timecodeWrapper.appendChild(playIconHost);
+            timecodeWrapper.appendChild(timecode);
+            content.appendChild(timecodeWrapper);
+        }
+        content.appendChild(createOwnedAttachmentCloseControl(attachment, scope, scope.mediaAttachmentContentAttr));
 
-        container.appendChild(preview);
+        label.appendChild(image);
+        label.appendChild(content);
+        attachmentHost.appendChild(matChip);
+        container.appendChild(attachmentHost);
         return chip;
     }
 
@@ -2240,23 +2520,357 @@
         });
     }
 
+    const THINKING_DOTS_DOT_PATH = ' M4,0 C4,0 4,0 4,0 C4,2.2076001167297363 2.2076001167297363,4 0,4 C0,4 0,4 0,4 C-2.2076001167297363,4 -4,2.2076001167297363 -4,0 C-4,0 -4,0 -4,0 C-4,-2.2076001167297363 -2.2076001167297363,-4 0,-4 C0,-4 0,-4 0,-4 C2.2076001167297363,-4 4,-2.2076001167297363 4,0z';
+
+    const THINKING_DOTS_ANIMATION = {
+        fr: 60.0914611816406,
+        ip: 0,
+        op: 693.005318581434,
+        center: {
+            p: [14, 14],
+            a: [50, 50],
+            r: [
+                [192.001, [0], [0.566, 1], [0.435, 0]],
+                [235.002, [-120], [0.667, 1], [0.333, 0]],
+                [481.004, [-120], [0.226, 1], [0.274, 0]],
+                [536.004113650287, [-360]],
+            ],
+        },
+        layers: [
+            {
+                nm: 'LEFT',
+                s: [50, 50],
+                p: [
+                    [0, [43.4, 53.744], [0.559, 1], [0.243, 0.609], [0, 0], [0, 0]],
+                    [12, [43.4, 55], [0.34, 1], [0.516, 0.008], [0, 0], [0, 0]],
+                    [48, [43.4, 45], [0.34, 1], [0.516, 0.008], [0, 0], [0, 0]],
+                    [84.001, [43.4, 55], [0.34, 1], [0.516, 0.008], [0, 0], [0, 0]],
+                    [120.001, [43.4, 45], [0.34, 1], [0.516, 0.008], [0, 0], [0, 0]],
+                    [156.001, [43.4, 55], [0.667, 1], [0.516, 0.008], [0, 0], [-0.04, 3.987]],
+                    [192.001, [43.4, 45], [0.667, 1], [0.333, 0], [-0.212, 14.619], [0, 0]],
+                    [235.002, [53.212, 59.625], [0.667, 1], [0.333, 0], [0, 0], [0, 0]],
+                    [268.002, [43.4, 43.1], [0.667, 1], [0.333, 0], [0, 0], [0, 0]],
+                    [301.002, [53.212, 59.625], [0.667, 1], [0.333, 0], [0, 0], [0, 0]],
+                    [337.003, [43.4, 43.1], [0.667, 1], [0.333, 0], [0, 0], [0, 0]],
+                    [373.003, [53.212, 59.625], [0.667, 1], [0.333, 0], [0, 0], [0, 0]],
+                    [409.003, [43.4, 43.1], [0.667, 1], [0.333, 0], [0, 0], [0, 0]],
+                    [445.003, [53.212, 59.625], [0.667, 1], [0.333, 0], [0, 0], [0, 0]],
+                    [481.004, [43.4, 43.1], [0.34, 1], [0.333, 0], [0, 0], [0, 0]],
+                    [524.004, [43.4, 45], null, null, null, null, 1],
+                    [536.004, [43.4, 45], [0.34, 1], [0.516, 0.005], [0, 0], [0, 0]],
+                    [560.004, [43.4, 55], [0.34, 1], [0.516, 0.008], [0, 0], [0, 0]],
+                    [596.005, [43.4, 45], [0.34, 1], [0.516, 0.008], [0, 0], [0, 0]],
+                    [632.005, [43.4, 55], [0.34, 1], [0.516, 0.008], [0, 0], [0, 0]],
+                    [668.005, [43.4, 45], [0.576, 0.694], [0.601, 0.007], [0, 0], [0, 0]],
+                    [692.005310906713, [43.4, 53.744]],
+                ],
+            },
+            {
+                nm: 'CENTER',
+                s: [50, 50],
+                p: [
+                    [0, [50, 47.037], [0.468, 1], [0.313, 0.367], [0, 0], [0, 0]],
+                    [24, [50, 55], [0.5, 1], [0.5, 0], [0, 0], [0, 0]],
+                    [60, [50, 45], [0.5, 1], [0.5, 0], [0, 0], [0, 0]],
+                    [96.001, [50, 55], [0.5, 1], [0.5, 0], [0, 0], [0, 0]],
+                    [132.001, [50, 45], [0.5, 1], [0.5, 0], [0, 0], [0, 0]],
+                    [168.001, [50, 55], [0.833, 0.833], [0.5, 0], [0, 0], [3.375, 2.938]],
+                    [204.002, [50, 45], [0.667, 1], [0.167, 0.167], [-4.316, -3.756], [0, 0]],
+                    [235.002, [40.688, 47.75], [0.667, 1], [0.333, 0], [0, 0], [0, 0]],
+                    [268.002, [59.562, 47.75], [0.667, 1], [0.333, 0], [0, 0], [0, 0]],
+                    [301.002, [40.688, 47.75], [0.667, 1], [0.333, 0], [0, 0], [0, 0]],
+                    [337.003, [59.562, 47.75], [0.667, 1], [0.333, 0], [0, 0], [0, 0]],
+                    [373.003, [40.688, 47.75], [0.667, 1], [0.333, 0], [0, 0], [0, 0]],
+                    [409.003, [59.562, 47.75], [0.667, 1], [0.333, 0], [0, 0], [0, 0]],
+                    [445.003, [40.688, 47.75], [0.667, 1], [0.333, 0], [0, 0], [0, 0]],
+                    [481.004, [59.562, 47.75], [0.5, 1], [0.333, 0], [0, 0], [0, 0]],
+                    [522.004, [50, 45], null, null, null, null, 1],
+                    [536.004, [50, 45], [0.5, 1], [0.5, 0], [0, 0], [0, 0]],
+                    [572.004, [50, 55], [0.5, 1], [0.5, 0], [0, 0], [0, 0]],
+                    [608.005, [50, 45], [0.5, 1], [0.5, 0], [0, 0], [0, 0]],
+                    [644.005, [50, 55], [0.5, 1], [0.5, 0], [0, 0], [0, 0]],
+                    [680.005, [50, 45], [0.744, 0.413], [0.435, 0], [0, 0], [0, 0]],
+                    [692.005310906713, [50, 47.037]],
+                ],
+            },
+            {
+                nm: 'RIGHT',
+                s: [50, 50],
+                p: [
+                    [0, [56.6, 45], [0.5, 1], [0.5, 0], [0, 0], [0, 0]],
+                    [36, [56.6, 55], [0.5, 1], [0.5, 0], [0, 0], [0, 0]],
+                    [72.001, [56.6, 45], [0.5, 1], [0.5, 0], [0, 0], [0, 0]],
+                    [108.001, [56.6, 55], [0.5, 1], [0.5, 0], [0, 0], [0, 0]],
+                    [144.001, [56.6, 45], [0.5, 1], [0.5, 0], [0, 0], [0, 0]],
+                    [180.001, [56.6, 55], [0.5, 1], [0.5, 0], [0, 0], [-0.133, 3.463]],
+                    [235.002, [56.6, 43.1], [0.667, 1], [0.5, 0], [-6.076, 10.768], [0, 0]],
+                    [268.002, [47.225, 59.438], [0.667, 1], [0.333, 0], [0, 0], [0, 0]],
+                    [301.002, [56.6, 43.1], [0.667, 1], [0.333, 0], [0, 0], [0, 0]],
+                    [337.003, [47.225, 59.438], [0.667, 1], [0.333, 0], [0, 0], [0, 0]],
+                    [373.003, [56.6, 43.1], [0.667, 1], [0.333, 0], [0, 0], [0, 0]],
+                    [409.003, [47.225, 59.438], [0.667, 1], [0.333, 0], [0, 0], [0, 0]],
+                    [445.003, [56.6, 43.1], [0.667, 1], [0.333, 0], [0, 0], [0, 0]],
+                    [481.004, [47.225, 59.438], [0.5, 1], [0.333, 0], [0, 0], [0, 0]],
+                    [536.004, [56.6, 45], [0.5, 1], [0.5, 0], [0, 0], [0, 0]],
+                    [584.004, [56.6, 55], [0.5, 1], [0.5, 0], [0, 0], [0, 0]],
+                    [620.005, [56.6, 45], [0.5, 1], [0.5, 0], [0, 0], [0, 0]],
+                    [656.005, [56.6, 55], [0.5, 1], [0.5, 0], [0, 0], [0, 0]],
+                    [692.005310906713, [56.6, 45]],
+                ],
+            },
+        ],
+    };
+
+    function getThinkingDotsRenderLayers() {
+        return ['RIGHT', 'CENTER', 'LEFT']
+            .map((name) => THINKING_DOTS_ANIMATION.layers.find((layer) => layer.nm === name))
+            .filter(Boolean);
+    }
+
+    function hasNonZeroVector(vector) {
+        return Array.isArray(vector) && vector.some((value) => Math.abs(value || 0) > 0.000001);
+    }
+
+    function solveCubicBezier(x1, y1, x2, y2, x) {
+        if (x <= 0 || (x1 === y1 && x2 === y2)) {
+            return x;
+        }
+
+        if (x >= 1) {
+            return 1;
+        }
+
+        const cx = 3 * x1;
+        const bx = 3 * (x2 - x1) - cx;
+        const ax = 1 - cx - bx;
+        const cy = 3 * y1;
+        const by = 3 * (y2 - y1) - cy;
+        const ay = 1 - cy - by;
+        let t = x;
+
+        for (let i = 0; i < 8; i += 1) {
+            const currentX = ((ax * t + bx) * t + cx) * t - x;
+            const derivative = (3 * ax * t + 2 * bx) * t + cx;
+            if (Math.abs(currentX) < 0.000001 || Math.abs(derivative) < 0.000001) {
+                break;
+            }
+            t -= currentX / derivative;
+        }
+
+        if (t < 0 || t > 1) {
+            let low = 0;
+            let high = 1;
+            for (let i = 0; i < 24; i += 1) {
+                const mid = (low + high) / 2;
+                const midX = ((ax * mid + bx) * mid + cx) * mid;
+                if (midX < x) {
+                    low = mid;
+                } else {
+                    high = mid;
+                }
+            }
+            t = (low + high) / 2;
+        }
+
+        return ((ay * t + by) * t + cy) * t;
+    }
+
+    function interpolateThinkingDotsValue(start, end, progress, keyframe, nextKeyframe) {
+        const dimensions = Math.max(start.length, end.length);
+        const outgoing = keyframe[3] || [0, 0];
+        const incoming = keyframe[2] || [1, 1];
+        const easedProgress = solveCubicBezier(
+            outgoing[0] ?? 0,
+            outgoing[1] ?? 0,
+            incoming[0] ?? 1,
+            incoming[1] ?? 1,
+            progress,
+        );
+        const spatialOut = keyframe[4] || null;
+        const spatialIn = nextKeyframe[5] || null;
+        const useSpatialCurve = hasNonZeroVector(spatialOut) || hasNonZeroVector(spatialIn);
+
+        return Array.from({ length: dimensions }, (_, index) => {
+            const startValue = start[index] ?? start[0] ?? 0;
+            const endValue = end[index] ?? end[0] ?? startValue;
+            if (!useSpatialCurve) {
+                return startValue + ((endValue - startValue) * easedProgress);
+            }
+
+            const outHandle = startValue + (spatialOut?.[index] || 0);
+            const inHandle = endValue + (spatialIn?.[index] || 0);
+            const inverse = 1 - easedProgress;
+            return (inverse ** 3 * startValue)
+                + (3 * inverse ** 2 * easedProgress * outHandle)
+                + (3 * inverse * easedProgress ** 2 * inHandle)
+                + (easedProgress ** 3 * endValue);
+        });
+    }
+
+    function getThinkingDotsKeyframeValue(keyframes, frame) {
+        if (!Array.isArray(keyframes) || !keyframes.length) {
+            return [0, 0];
+        }
+
+        if (frame <= keyframes[0][0]) {
+            return keyframes[0][1];
+        }
+
+        for (let index = 0; index < keyframes.length - 1; index += 1) {
+            const keyframe = keyframes[index];
+            const nextKeyframe = keyframes[index + 1];
+            const nextFrame = nextKeyframe[0];
+            if (frame < nextFrame || index === keyframes.length - 2) {
+                if (keyframe[6] === 1 || nextFrame === keyframe[0]) {
+                    return keyframe[1];
+                }
+
+                const progress = Math.max(0, Math.min(1, (frame - keyframe[0]) / (nextFrame - keyframe[0])));
+                return interpolateThinkingDotsValue(keyframe[1], nextKeyframe[1], progress, keyframe, nextKeyframe);
+            }
+        }
+
+        return keyframes[keyframes.length - 1][1];
+    }
+
+    function formatThinkingDotsMatrixNumber(value) {
+        if (!Number.isFinite(value) || Math.abs(value) < 0.000001) {
+            return '0';
+        }
+
+        return String(Math.round(value * 1000000) / 1000000);
+    }
+
+    function getThinkingDotsLayerMatrix(layer, frame) {
+        const center = THINKING_DOTS_ANIMATION.center;
+        const rotation = getThinkingDotsKeyframeValue(center.r, frame)[0] || 0;
+        const position = getThinkingDotsKeyframeValue(layer.p, frame);
+        const radians = rotation * Math.PI / 180;
+        const cos = Math.cos(radians);
+        const sin = Math.sin(radians);
+        const scaleX = (layer.s?.[0] ?? 100) / 100;
+        const scaleY = (layer.s?.[1] ?? 100) / 100;
+        const dx = (position[0] ?? 0) - center.a[0];
+        const dy = (position[1] ?? 0) - center.a[1];
+
+        return [
+            cos * scaleX,
+            sin * scaleX,
+            -sin * scaleY,
+            cos * scaleY,
+            center.p[0] + (cos * dx) - (sin * dy),
+            center.p[1] + (sin * dx) + (cos * dy),
+        ];
+    }
+
+    function renderThinkingDotsFrame(dotGroups, dotLayers, frame) {
+        dotGroups.forEach((dotGroup, index) => {
+            const matrix = getThinkingDotsLayerMatrix(dotLayers[index], frame)
+                .map(formatThinkingDotsMatrixNumber)
+                .join(',');
+            dotGroup.setAttribute('transform', `matrix(${matrix})`);
+        });
+    }
+
+    function startThinkingDotsLottieAnimation(root, dotGroups, dotLayers) {
+        const requestFrame = window.requestAnimationFrame
+            ? window.requestAnimationFrame.bind(window)
+            : ((callback) => window.setTimeout(() => callback(Date.now()), 16));
+        const animation = THINKING_DOTS_ANIMATION;
+        const durationFrames = animation.op - animation.ip;
+        const startedAt = window.performance?.now?.() || Date.now();
+        let hasConnected = false;
+
+        const tick = (timestamp) => {
+            const now = typeof timestamp === 'number' ? timestamp : Date.now();
+            if (root.isConnected) {
+                hasConnected = true;
+            } else if (hasConnected || now - startedAt > 5000) {
+                return;
+            }
+
+            const elapsedFrames = ((now - startedAt) / 1000) * animation.fr;
+            const frame = animation.ip + (elapsedFrames % durationFrames);
+            renderThinkingDotsFrame(dotGroups, dotLayers, frame);
+            root.__geminiEditorThinkingDotsFrame = requestFrame(tick);
+        };
+
+        renderThinkingDotsFrame(dotGroups, dotLayers, animation.ip);
+        root.__geminiEditorThinkingDotsFrame = requestFrame(tick);
+    }
+
+    function createThinkingDotsAnimation(sourceResponseNode) {
+        const root = document.createElement('thinking-dots-animation');
+        root.className = 'ng-star-inserted';
+        root.setAttribute('data-gemini-editor-loading-dots', 'true');
+        copyAngularScopeAttributes(sourceResponseNode, root);
+
+        const wrapper = document.createElement('div');
+        wrapper.className = 'thinking-dots-animation';
+        wrapper.setAttribute('lottie-animation', '');
+        copyAngularScopeAttributes(sourceResponseNode, wrapper);
+
+        const svgNs = 'http://www.w3.org/2000/svg';
+        const svg = document.createElementNS(svgNs, 'svg');
+        svg.setAttribute('xmlns', svgNs);
+        svg.setAttributeNS('http://www.w3.org/2000/xmlns/', 'xmlns:xlink', 'http://www.w3.org/1999/xlink');
+        svg.setAttribute('viewBox', '0 0 28 28');
+        svg.setAttribute('width', '28');
+        svg.setAttribute('height', '28');
+        svg.setAttribute('style', 'width: 100%; height: 100%; transform: translate3d(0px, 0px, 0px); content-visibility: visible;');
+        svg.setAttribute('preserveAspectRatio', 'xMidYMid meet');
+        svg.setAttribute('aria-hidden', 'true');
+        svg.setAttribute('focusable', 'false');
+
+        const clipId = `gemini-editor-lottie-${Date.now().toString(36)}-${Math.random().toString(36).slice(2)}`;
+        const defs = document.createElementNS(svgNs, 'defs');
+        const clipPath = document.createElementNS(svgNs, 'clipPath');
+        clipPath.setAttribute('id', clipId);
+        const clipRect = document.createElementNS(svgNs, 'rect');
+        clipRect.setAttribute('width', '28');
+        clipRect.setAttribute('height', '28');
+        clipRect.setAttribute('x', '0');
+        clipRect.setAttribute('y', '0');
+        clipPath.appendChild(clipRect);
+        defs.appendChild(clipPath);
+        svg.appendChild(defs);
+
+        const clippedGroup = document.createElementNS(svgNs, 'g');
+        clippedGroup.setAttribute('clip-path', `url(#${clipId})`);
+
+        const dotLayers = getThinkingDotsRenderLayers();
+        const dotGroups = [];
+        dotLayers.forEach((layer, index) => {
+            const dotGroup = document.createElementNS(svgNs, 'g');
+            dotGroup.setAttribute('style', 'display: block;');
+            dotGroup.setAttribute('opacity', '1');
+            dotGroup.setAttribute('data-gemini-editor-dot-index', String(index));
+            dotGroup.setAttribute('data-gemini-editor-dot-layer', layer.nm.toLowerCase());
+
+            const innerGroup = document.createElementNS(svgNs, 'g');
+            innerGroup.setAttribute('opacity', '1');
+            innerGroup.setAttribute('transform', 'matrix(1,0,0,1,0,0)');
+
+            const path = document.createElementNS(svgNs, 'path');
+            path.setAttribute('fill', 'rgb(0,0,0)');
+            path.setAttribute('fill-opacity', '1');
+            path.setAttribute('d', THINKING_DOTS_DOT_PATH);
+
+            innerGroup.appendChild(path);
+            dotGroup.appendChild(innerGroup);
+            clippedGroup.appendChild(dotGroup);
+            dotGroups.push(dotGroup);
+        });
+
+        svg.appendChild(clippedGroup);
+        wrapper.appendChild(svg);
+        root.appendChild(wrapper);
+        startThinkingDotsLottieAnimation(root, dotGroups, dotLayers);
+        return root;
+    }
+
     function createFallbackPendingAvatar(sourceResponseNode) {
-        const avatar = document.createElement('div');
-        avatar.className = 'avatar avatar_primary ng-star-inserted';
-        copyAngularScopeAttributes(sourceResponseNode, avatar);
-
-        const model = document.createElement('div');
-        model.className = 'avatar_primary_model is-gpi-avatar';
-        copyAngularScopeAttributes(sourceResponseNode, model);
-
-        const icon = document.createElement('mat-icon');
-        icon.className = 'google-symbols notranslate';
-        icon.setAttribute('fonticon', 'auto_awesome');
-        icon.textContent = 'auto_awesome';
-
-        model.appendChild(icon);
-        avatar.appendChild(model);
-        return avatar;
+        return createThinkingDotsAnimation(sourceResponseNode);
     }
 
     function createOptimisticResponseSlot(sourceResponseNode) {
@@ -2269,8 +2883,6 @@
         const sourceHeader = sourceResponseNode.querySelector('.response-container-header');
         const sourceControls = sourceHeader?.querySelector('.response-container-header-controls') || null;
         const sourceAvatarWrapper = sourceHeader?.querySelector('.response-container-header-avatar') || null;
-        const sourceAvatar = sourceAvatarWrapper?.querySelector('.avatar')
-            || sourceResponseNode.querySelector('.avatar.avatar_primary, .avatar');
 
         const placeholder = document.createElement('pending-response');
         placeholder.className = sourceResponseNode.className || 'ng-star-inserted';
@@ -2307,9 +2919,7 @@
             'response-container-header-avatar ng-star-inserted',
         );
 
-        avatarWrapper.appendChild(
-            sourceAvatar ? sourceAvatar.cloneNode(true) : createFallbackPendingAvatar(sourceResponseNode),
-        );
+        avatarWrapper.appendChild(createFallbackPendingAvatar(sourceResponseNode));
         header.appendChild(controls);
         header.appendChild(avatarWrapper);
         innerContainer.appendChild(header);
@@ -2936,12 +3546,39 @@
             }
 
             user-query-content.edit-mode [${ATTRS.wrapper}="true"],
-            user-query-content.edit-mode [${ATTRS.customButton}="true"] {
+            user-query-content.edit-mode [${ATTRS.customButton}="true"],
+            .user-query-container.edit-mode [${ATTRS.wrapper}="true"],
+            .user-query-container.edit-mode [${ATTRS.customButton}="true"],
+            .query-content.edit-mode [${ATTRS.wrapper}="true"],
+            .query-content.edit-mode [${ATTRS.customButton}="true"] {
                 display: none !important;
             }
 
-            user-query[${ATTRS.processed}="true"] div:has(> ${SELECTORS.nativeEditButton}:not([${ATTRS.customButton}="true"])) {
+            user-query[${ATTRS.processed}="true"] ${SELECTORS.nativePromptActionHost} {
                 display: none !important;
+            }
+
+            [data-gemini-editor-pending-response="true"] [data-gemini-editor-loading-dots="true"] {
+                display: inline-block;
+                width: 28px;
+                height: 28px;
+                color: var(--gem-sys-color--on-surface, currentColor);
+            }
+
+            [data-gemini-editor-pending-response="true"] [data-gemini-editor-loading-dots="true"] .thinking-dots-animation {
+                width: var(--gem-sys-spacing--xxl, 28px);
+                height: var(--gem-sys-spacing--xxl, 28px);
+            }
+
+            [data-gemini-editor-pending-response="true"] [data-gemini-editor-loading-dots="true"] svg {
+                width: 100%;
+                height: 100%;
+                display: block;
+            }
+
+            [data-gemini-editor-pending-response="true"] [data-gemini-editor-loading-dots="true"] svg path {
+                fill: var(--gem-sys-color--on-surface, currentColor);
+                stroke: var(--gem-sys-color--on-surface, currentColor);
             }
 
             [data-gemini-editor-pending-response="true"] .avatar_primary_animation {
@@ -3025,6 +3662,156 @@
             uploader-file-preview[${ATTRS.attachmentOwned}="true"] .file-preview-container {
                 padding: 0;
                 position: relative;
+            }
+
+            uploader-file-preview[${ATTRS.attachmentOwned}="true"] .gem-attachment-tile {
+                display: flex;
+                width: 112px;
+                height: 112px;
+                position: relative;
+                color: var(--gem-sys-color--on-surface, #1f1f1f);
+            }
+
+            uploader-file-preview[${ATTRS.attachmentOwned}="true"] mat-basic-chip {
+                display: block;
+                width: 100%;
+                height: 100%;
+                position: relative;
+                overflow: hidden;
+                box-sizing: border-box;
+                border-radius: var(--gem-sys-shape--corner-large-increased, 18px);
+                background-color: var(--bard-color-lm-on-surface-low, var(--gem-sys-color--surface-container, #f0f4f9));
+            }
+
+            uploader-file-preview[${ATTRS.attachmentOwned}="true"] .mdc-evolution-chip__cell,
+            uploader-file-preview[${ATTRS.attachmentOwned}="true"] .mdc-evolution-chip__action,
+            uploader-file-preview[${ATTRS.attachmentOwned}="true"] .mdc-evolution-chip__text-label {
+                display: block;
+                width: 100%;
+                height: 100%;
+            }
+
+            uploader-file-preview[${ATTRS.attachmentOwned}="true"] .mat-mdc-chip-focus-overlay,
+            uploader-file-preview[${ATTRS.attachmentOwned}="true"] .mat-mdc-chip-primary-focus-indicator {
+                display: none;
+            }
+
+            uploader-file-preview[${ATTRS.attachmentOwned}="true"] .gem-attachment-content {
+                position: absolute;
+                inset: var(--gem-sys-spacing--s, 8px);
+                z-index: 1;
+                display: flex;
+                flex-direction: column;
+                justify-content: flex-end;
+                pointer-events: none;
+            }
+
+            uploader-file-preview[${ATTRS.attachmentOwned}="true"] .gem-attachment-icon {
+                position: absolute;
+                top: 0;
+                inset-inline-start: 0;
+                display: flex;
+                width: 24px;
+                height: 24px;
+                align-items: center;
+                justify-content: center;
+            }
+
+            uploader-file-preview[${ATTRS.attachmentOwned}="true"] .gem-attachment-icon img,
+            uploader-file-preview[${ATTRS.attachmentOwned}="true"] .gem-attachment-icon .lm-icon-l {
+                width: 24px;
+                height: 24px;
+            }
+
+            uploader-file-preview[${ATTRS.attachmentOwned}="true"] .gem-attachment-text {
+                display: -webkit-box;
+                width: 100%;
+                max-height: 60px;
+                overflow: hidden;
+                color: var(--gem-sys-color--on-surface, #1f1f1f);
+                font-family: "Google Sans Flex", "Google Sans", "Helvetica Neue", sans-serif;
+                font-size: 14px;
+                line-height: 20px;
+                white-space: pre-wrap;
+                overflow-wrap: anywhere;
+                text-overflow: ellipsis;
+                -webkit-box-orient: vertical;
+                -webkit-line-clamp: 3;
+            }
+
+            uploader-file-preview[${ATTRS.attachmentOwned}="true"] .gem-attachment-style-img {
+                position: absolute;
+                inset: 0;
+                width: 100%;
+                height: 100%;
+                object-fit: cover;
+                z-index: 0;
+            }
+
+            uploader-file-preview[${ATTRS.attachmentOwned}="true"] .time-overlay {
+                display: flex;
+                align-items: center;
+                gap: 2px;
+                width: fit-content;
+                max-width: calc(100% - 28px);
+                color: #000;
+                background-color: #fff;
+                border-radius: var(--gem-sys-shape--corner-full, 999px);
+                padding: 2px 6px 2px 4px;
+                font-family: "Google Sans", "Helvetica Neue", sans-serif;
+                font-size: 12px;
+                line-height: 16px;
+                pointer-events: none;
+            }
+
+            uploader-file-preview[${ATTRS.attachmentOwned}="true"] .time-overlay mat-icon {
+                width: 16px;
+                height: 16px;
+                font-size: 16px;
+                color: #000;
+            }
+
+            uploader-file-preview[${ATTRS.attachmentOwned}="true"] .gem-attachment-close-button {
+                position: absolute;
+                top: 4px;
+                inset-inline-end: 4px;
+                z-index: 3;
+                width: 24px;
+                height: 24px;
+                border-radius: 50%;
+                background-color: #fff;
+                visibility: hidden;
+                pointer-events: auto;
+                overflow: hidden;
+            }
+
+            uploader-file-preview[${ATTRS.attachmentOwned}="true"] .gem-attachment-tile:hover .gem-attachment-close-button,
+            uploader-file-preview[${ATTRS.attachmentOwned}="true"] .gem-attachment-tile:focus-within .gem-attachment-close-button {
+                visibility: visible;
+            }
+
+            uploader-file-preview[${ATTRS.attachmentOwned}="true"] .gem-attachment-close-button button {
+                display: flex;
+                width: 24px;
+                height: 24px;
+                min-width: 24px;
+                padding: 0;
+                align-items: center;
+                justify-content: center;
+                border: 0;
+                border-radius: 50%;
+                background: transparent;
+                color: #000;
+                cursor: pointer;
+            }
+
+            uploader-file-preview[${ATTRS.attachmentOwned}="true"] .gem-attachment-close-button mat-icon {
+                display: block;
+                width: 18px;
+                height: 18px;
+                font-size: 18px;
+                line-height: 18px;
+                color: #000;
             }
 
             uploader-file-preview[${ATTRS.attachmentOwned}="true"] .file-preview,
@@ -3206,12 +3993,55 @@
         }
     }
 
+    function getClickableButtonFromActionNode(node) {
+        if (!node) {
+            return null;
+        }
+
+        if (node.matches?.('button')) {
+            return node;
+        }
+
+        return node.querySelector?.('button') || null;
+    }
+
+    function getPromptActionHost(button) {
+        if (!button) {
+            return null;
+        }
+
+        const componentHost = button.closest?.('gem-icon-button, gem-button');
+        if (componentHost) {
+            return componentHost;
+        }
+
+        const dataTestHost = button.closest?.('[data-test-id="prompt-copy-button"], [data-test-id="prompt-edit-button"]');
+        if (dataTestHost && dataTestHost !== button) {
+            return dataTestHost;
+        }
+
+        return button.parentElement || button;
+    }
+
     function createEditButtonElement(copyButton) {
         const strings = getUiStrings();
-        const container = document.createElement('div');
-        const baseWrapperClass = copyButton?.parentElement?.className || 'ng-star-inserted';
-        container.className = baseWrapperClass;
+        const sourceHost = getPromptActionHost(copyButton);
+        const container = sourceHost
+            ? sourceHost.cloneNode(false)
+            : document.createElement('gem-icon-button');
+
+        if (!sourceHost) {
+            container.className = 'luminous-action-button gem-button gem-button-badge-size-small gem-button-size-small gem-button-type-translucent lm-enabled ng-star-inserted';
+        }
+
         container.setAttribute(ATTRS.wrapper, 'true');
+        container.setAttribute(ATTRS.tooltip, strings.editTooltip);
+        container.setAttribute('arialabel', strings.editLabel);
+        container.setAttribute('gemtooltip', strings.editTooltip);
+        container.removeAttribute('data-test-id');
+        container.removeAttribute('aria-describedby');
+        container.removeAttribute('cdk-describedby-host');
+        container.removeAttribute('jslog');
 
         const button = copyButton ? copyButton.cloneNode(true) : document.createElement('button');
 
@@ -3224,6 +4054,7 @@
         button.removeAttribute('disabled');
         button.removeAttribute('aria-disabled');
         button.removeAttribute('aria-describedby');
+        button.removeAttribute('aria-controls');
         button.removeAttribute('cdk-describedby-host');
         button.removeAttribute('data-test-id');
         button.removeAttribute('jslog');
@@ -3515,7 +4346,19 @@
             ? getAttachmentCarryoverForContainer(currentContainer, index)
             : [];
         const sourceAttachments = cachedAttachments.length ? cachedAttachments : carryoverAttachments;
-        const attachments = filterCachedAttachmentsByUserQueryUi(sourceAttachments, userQuery);
+        let attachments = filterCachedAttachmentsByUserQueryUi(sourceAttachments, userQuery);
+        if (!attachments.length) {
+            attachments = findCachedAttachmentsByUserQueryUi(
+                currentData?.c || getConversationIdFromLocation(),
+                userQuery,
+            );
+        }
+        const fallbackUiAttachments = !attachments.length
+            ? createFallbackAttachmentRecordsFromUserQueryUi(userQuery)
+            : [];
+        if (fallbackUiAttachments.length) {
+            attachments = fallbackUiAttachments;
+        }
         logDebug('Opening edit mode.', {
             index,
             text,
@@ -3523,6 +4366,7 @@
             messageId: currentData?.r ?? null,
             cachedAttachmentCount: cachedAttachments.length,
             carryoverAttachmentCount: carryoverAttachments.length,
+            fallbackAttachmentCount: fallbackUiAttachments.length,
             attachmentCount: attachments.length,
         });
 
@@ -3536,7 +4380,12 @@
 
     function getNativeEditButton(userQuery) {
         const nativeButton = Array.from(userQuery.querySelectorAll(SELECTORS.nativeEditButton))
-            .find((button) => button.getAttribute(ATTRS.customButton) !== 'true');
+            .map(getClickableButtonFromActionNode)
+            .find((button) => {
+                return button
+                    && button.getAttribute(ATTRS.customButton) !== 'true'
+                    && !button.closest?.(`[${ATTRS.wrapper}="true"]`);
+            });
         if (nativeButton) {
             return nativeButton;
         }
@@ -3544,19 +4393,28 @@
         return Array.from(userQuery.querySelectorAll(SELECTORS.nativeEditIcon))
             .map((icon) => icon.closest('button'))
             .find((button) => {
-                return button && button.getAttribute(ATTRS.customButton) !== 'true';
+                return button
+                    && button.getAttribute(ATTRS.customButton) !== 'true'
+                    && !button.closest?.(`[${ATTRS.wrapper}="true"]`);
             }) || null;
     }
 
     function hideNativeEditButton(nativeEditButton) {
-        const wrapper = nativeEditButton?.closest?.('div');
+        const wrapper = getPromptActionHost(nativeEditButton);
         if (wrapper && wrapper.getAttribute(ATTRS.wrapper) !== 'true') {
             wrapper.style.display = 'none';
         }
     }
 
     function isNativeEditModeContainer(container) {
-        return Boolean(container?.querySelector?.('.edit-button-area button.cancel-button, .edit-button-area button.update-button'));
+        return Boolean(container?.querySelector?.([
+            '.edit-button-area button.cancel-button',
+            '.edit-button-area button.update-button',
+            '.edit-button-area gem-button.cancel-button',
+            '.edit-button-area gem-button.update-button',
+            '.user-query-container.edit-mode',
+            '.query-content.edit-mode',
+        ].join(', ')));
     }
 
     function removeCustomEditButtons(root) {
@@ -3617,7 +4475,7 @@
         }
 
         const currentContainer = userQuery.closest(SELECTORS.conversationContainer);
-        const wrapper = nativeEditButton.closest('div');
+        const wrapper = getPromptActionHost(nativeEditButton);
         const previousDisplay = wrapper?.style?.display;
         customButtonContainer?.remove();
         removeCustomEditButtons(currentContainer);
@@ -3672,7 +4530,7 @@
         }
 
         const copyButton = copyIcon.closest('button');
-        const copyWrapper = copyButton?.parentElement;
+        const copyWrapper = getPromptActionHost(copyButton);
         const buttonsContainer = copyWrapper?.parentElement;
         if (!copyButton || !copyWrapper || !buttonsContainer) {
             return;
@@ -3689,8 +4547,8 @@
         const { container, button } = createEditButtonElement(copyButton);
 
         if (nativeEditButton) {
-            const nativeWrapper = nativeEditButton.closest('div');
-            if (nativeWrapper) {
+            const nativeWrapper = getPromptActionHost(nativeEditButton);
+            if (nativeWrapper && nativeWrapper.parentElement === buttonsContainer) {
                 nativeWrapper.style.display = 'none';
                 buttonsContainer.insertBefore(container, nativeWrapper);
             } else if (copyWrapper.nextSibling) {
@@ -3793,9 +4651,12 @@
     }
 
     function isEnabledSendButton(button) {
+        const innerButton = button?.matches?.('button') ? button : button?.querySelector?.('button');
         return button
             && !button.disabled
-            && button.getAttribute('aria-disabled') !== 'true';
+            && !innerButton?.disabled
+            && button.getAttribute('aria-disabled') !== 'true'
+            && innerButton?.getAttribute?.('aria-disabled') !== 'true';
     }
 
     function handleSubmitIntentCapture(event) {
@@ -3803,7 +4664,7 @@
             return;
         }
 
-        const sendButton = event.target?.closest?.('button.send-button.submit');
+        const sendButton = event.target?.closest?.(SELECTORS.sendButton);
         if (isEnabledSendButton(sendButton)) {
             handlePendingEditSubmitIntent();
         }
